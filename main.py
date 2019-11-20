@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import os
 import random
 import secrets
@@ -58,7 +59,7 @@ def hinkali_markup():
             data = hin_cb.new(type=h_type, amount=h_amount)
             buttons.append(types.InlineKeyboardButton(text=text, callback_data=data))
         markup.row(*buttons)
-    d_text = emojize(':white_check_mark: Скидка' if bot.discount else ':x: Скидка')
+    d_text = emojize(':white_check_mark: Скидка 30%' if bot.discount else ':x: Скидки нет')
     markup.row(types.InlineKeyboardButton(text=d_text,
                                           callback_data=disc_cb.new(multiplier=str(30 - bot.discount))))
     return markup
@@ -123,6 +124,8 @@ async def discount_change(call: types.CallbackQuery, callback_data):
 async def start_order(message: types.Message):
     chat_id, mess_id = message.chat.id, message.message_id
     if not bot.order_message:
+        now = datetime.datetime.now()
+        bot.discount = 30 if 1 <= now.weekday() <= 4 else 0
         bot.order_message = await bot.send_message(chat_id, "Начните заказывать", reply_markup=hinkali_markup())
     else:
         await bot.send_message(chat_id, "Заказ уже в процессе.\nЗакончите его командой `/finish`",
