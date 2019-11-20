@@ -43,7 +43,8 @@ def ignored(exc):
 
 def pointer_markup():
     markup = types.InlineKeyboardMarkup()
-    url = f'https://t.me/c/{bot.order_message.chat.id}/{bot.order_message.message_id}'
+    link_chat_id = str(bot.order_message.chat.id).replace("-100", "")
+    url = f'https://t.me/c/{link_chat_id}/{bot.order_message.message_id}'
     markup.add(types.InlineKeyboardButton(text='Ссылка на заказ', url=url))
     return markup
 
