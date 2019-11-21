@@ -67,13 +67,14 @@ def hinkali_markup():
 
 def count_user(user):
     orders = bot.orders[user]
-    total = sum(map(lambda x: int(orders.get(x) * h_types[x] * (100 - bot.discount) / 100), orders))
+    total = sum(map(lambda x: orders.get(x) * h_types[x] * (100 - bot.discount) / 100, orders))
     return total
 
 
 def gen_report():
     lines = ['Заказ:']
     total_cost = 0
+
     if not bot.orders:
         order = 'Ещё ничего не заказано'
         return order
@@ -83,7 +84,9 @@ def gen_report():
         orders = ", ".join([f'{str(amount)} {h_type}' for h_type, amount in user_orders.items()])
         lines.append(f'{name} ({user_cost} ₽): {orders}')
         total_cost += user_cost
-    lines.append('\n')
+    total_orders = {h_type: sum(user_orders.get(h_type, 0) for user_orders in bot.orders.values()) for h_type in h_types}
+    total_orders_str = ", ".join([f'{str(amount)} {h_type}' for h_type, amount in total_orders.items() if amount])
+    lines.append('\nВсего заказ: {}'.format(total_orders_str))
     lines.append(f'Итого: {total_cost} ₽')
     order = '\n'.join(lines)
     return order
@@ -125,10 +128,10 @@ async def start_order(message: types.Message):
     chat_id, mess_id = message.chat.id, message.message_id
     if not bot.order_message:
         now = datetime.datetime.now()
-        bot.discount = 30 if 1 <= now.weekday() <= 4 else 0
+        bot.discount = 30 if 0 <= now.weekday() <= 3 else 0
         bot.order_message = await bot.send_message(chat_id, "Начните заказывать", reply_markup=hinkali_markup())
     else:
-        await bot.send_message(chat_id, "Заказ уже в процессе.\nЗакончите его командой `/finish`",
+        await bot.send_message(chat_id, "Заказ уже в процессе.\nЗакончите его командой /finish",
                                parse_mode='markdown', reply_markup=pointer_markup())
 
 
@@ -142,8 +145,10 @@ async def get_organizer(message: types.Message):
             await asyncio.sleep(5)
             await bot.delete_message(warning.chat.id, warning.message_id)
         return
-    name = bot.users[random.choice(tuple(bot.orders))]
-    await bot.send_message(chat_id, f"Святым рандомом заказывающим назначается:\n{name}")
+    user_id = random.choice(tuple(bot.orders))
+    name = bot.users[user_id]
+    await bot.send_message(chat_id, f"Святым рандомом заказывающим назначается:\n"
+                                    f"[{name}](tg://user?id={user_id})", parse_mode='markdown')
 
 
 @dp.message_handler(ChatType.is_group_or_super_group, commands=['finish'])
@@ -153,6 +158,9 @@ async def finalize(message: types.Message):
     chat_id, mess_id = bot.order_message.chat.id, bot.order_message.message_id
     with ignored(BadRequest):
         await bot.edit_message_reply_markup(chat_id, mess_id, reply_markup=None)
+    if bot.orders:
+        mentions=', '.join([f"[{bot.users[user_id]}](tg://user?id={user_id})" for user_id in bot.orders])
+        await bot.send_message(chat_id, f"Заказ приехал!\n{mentions}", parse_mode='markdown')
     bot.order_message = None
     bot.users = {}
     bot.orders = {}
@@ -165,6 +173,7 @@ async def start(message: types.Message):
 
 async def on_startup_webhook(dp):
     print(WEBHOOK_URL)
+    dp.skip_updates()
     await bot.set_webhook(WEBHOOK_URL)
 
 
