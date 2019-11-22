@@ -10,7 +10,7 @@ from aiogram.types import ChatType
 from aiogram.utils.callback_data import CallbackData
 from aiogram.utils.emoji import emojize
 from aiogram.utils.exceptions import MessageNotModified, BadRequest
-from aiogram.utils.executor import Executor
+from aiogram.utils.executor import start_webhook
 
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', '')
 PORT = int(os.getenv("PORT", '8443'))
@@ -165,7 +165,8 @@ async def payment_change(call: types.CallbackQuery, callback_data):
         with ignored(KeyError):
             bot.payments.remove(user_id)
     try:
-        payments_message = await bot.edit_message_text(payment_report(), chat_id, mess_id, reply_markup=payments_markup())
+        payments_message = await bot.edit_message_text(payment_report(), chat_id, mess_id,
+                                                       reply_markup=payments_markup())
         if not bot.payments_message:
             bot.payments_message = payments_message
         await bot.answer_callback_query(call.id, "Учтено")
@@ -237,16 +238,9 @@ async def start(message: types.Message):
 
 async def on_startup_webhook(dp):
     print(WEBHOOK_URL)
-    dp.skip_updates()
+    await bot.delete_webhook()
     await bot.set_webhook(WEBHOOK_URL)
 
 
-async def on_shutdown(dp):
-    await bot.delete_webhook()
-
-
 if __name__ == '__main__':
-    runner = Executor(dp)
-    runner.on_startup(on_startup_webhook, webhook=True)
-    runner.on_shutdown(on_shutdown, webhook=True)
-    runner.start_webhook(webhook_path=WEBHOOK_PATH, port=PORT)
+    start_webhook(dp, webhook_path=WEBHOOK_PATH, port=PORT, on_startup=on_startup_webhook, skip_updates=True)
