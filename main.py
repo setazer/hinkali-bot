@@ -3,6 +3,7 @@ import datetime
 import os
 import random
 import secrets
+import redis
 from contextlib import contextmanager
 
 from aiogram import Bot, Dispatcher, types
@@ -19,6 +20,8 @@ SECRET_KEY = secrets.token_urlsafe(48)
 WEBHOOK_BASE_PATH = os.getenv("WEBHOOK_BASE_PATH", "/webhook")
 WEBHOOK_PATH = f"{WEBHOOK_BASE_PATH}/{SECRET_KEY}"
 WEBHOOK_URL = f"https://{DOMAIN}{WEBHOOK_PATH}"
+REDIS_URL = os.getenv('REDIS_URL', '')
+LAST_ORG = 'last_organizer_id'
 
 bot = Bot(token=TELEGRAM_TOKEN)
 bot.users = {}
@@ -29,6 +32,7 @@ bot.order_message = None
 bot.payments_message = None
 bot.discount = 30
 dp = Dispatcher(bot)
+rds = redis.Redis.from_url(REDIS_URL)
 
 hin_cb = CallbackData('hin', 'type', 'amount')
 disc_cb = CallbackData('discount', 'multiplier')
@@ -71,12 +75,15 @@ def pointer_markup():
 
 def payments_markup():
     markup = types.InlineKeyboardMarkup()
+    link_chat_id = str(bot.order_message.chat.id).replace("-100", "")
+    url = f'https://t.me/c/{link_chat_id}/{bot.order_message.message_id}'
     markup.row(
         types.InlineKeyboardButton(text=emojize(':dollar: Оплачено'),
                                    callback_data=pay_cb.new(status='paid')),
         types.InlineKeyboardButton(text=emojize(':money_with_wings: Отмена'),
                                    callback_data=pay_cb.new(status='canceled')),
     )
+    markup.add(types.InlineKeyboardButton(text='Ссылка на заказ', url=url))
     return markup
 
 
@@ -196,10 +203,18 @@ async def get_organizer(message: types.Message):
             await asyncio.sleep(5)
             await bot.delete_message(warning.chat.id, warning.message_id)
         return
-    bot.organizer = random.choice(tuple(bot.orders))
+    last_org = rds.get(LAST_ORG)
+    random_victims = set(bot.orders)
+    if last_org and random_victims != {int(last_org)}:
+        random_victims -= {int(last_org)}
+    bot.organizer = random.choice(tuple(random_victims))
     name = bot.users[bot.organizer]
-    await bot.send_message(chat_id, f"Святым рандомом заказывающим назначается:\n"
-                                    f"[{name}](tg://user?id={bot.organizer})", parse_mode='markdown')
+    msg = (
+        f"Святым рандомом заказывающим назначается:\n" 
+        f"[{name}](tg://user?id={bot.organizer})\n"
+        + f"[Прошлый организатор](tg://user?id={int(last_org)})" if last_org else ""
+    )
+    await bot.send_message(chat_id, msg, parse_mode='markdown')
 
 
 @dp.message_handler(ChatType.is_group_or_super_group, commands=['pay'])
@@ -209,11 +224,27 @@ async def make_payments(message: types.Message):
         bot.payments_message = await bot.send_message(chat_id, payment_report(), reply_markup=payments_markup())
 
 
-@dp.message_handler(ChatType.is_group_or_super_group, commands=['finish'])
+async def org_filter(message: types.Message):
+    return not bot.organizer or message.from_user.id == bot.organizer
+
+async def orderers_filter(message: types.Message):
+    return message.from_user.id in bot.orders
+
+
+@dp.message_handler(ChatType.is_group_or_super_group, commands=['notify'])
+async def notify(message: types.Message):
+    chat_id, mess_id = bot.order_message.chat.id, bot.order_message.message_id
+    if bot.orders:
+        mentions = ', '.join([f"[{bot.users[user_id]}](tg://user?id={user_id})" for user_id in bot.orders])
+        await bot.send_message(chat_id, f"Заказ приехал!\n{mentions}", parse_mode='markdown')
+
+
+@dp.message_handler(ChatType.is_group_or_super_group, org_filter, orderers_filter, commands=['finish'])
 async def finalize(message: types.Message):
     if not bot.order_message:
         return
     chat_id, mess_id = bot.order_message.chat.id, bot.order_message.message_id
+    f_user_id, f_user_name = message.from_user.id, message.from_user.full_name or message.from_user.username
     with ignored(BadRequest):
         await bot.edit_message_reply_markup(chat_id, mess_id, reply_markup=None)
     if bot.payments_message:
@@ -222,13 +253,16 @@ async def finalize(message: types.Message):
             await bot.edit_message_reply_markup(chat_id, mess_id, reply_markup=None)
     if bot.orders:
         mentions = ', '.join([f"[{bot.users[user_id]}](tg://user?id={user_id})" for user_id in bot.orders])
-        await bot.send_message(chat_id, f"Заказ приехал!\n{mentions}", parse_mode='markdown')
+        await bot.send_message(chat_id, f"[{f_user_name}](tg://user?id={f_user_id}) завершил заказ.\n"
+                                        f"Заказ приехал!\n{mentions}", parse_mode='markdown')
     bot.order_message = None
     bot.payments_message = None
     bot.users = {}
     bot.orders = {}
     bot.payments = set()
-    bot.organizer = None
+    if bot.organizer:
+        rds.set(LAST_ORG, str(bot.organizer))
+        bot.organizer = None
 
 
 @dp.message_handler(ChatType.is_private, commands=['start'])
